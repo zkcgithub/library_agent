@@ -77,7 +77,7 @@ class LibraryAgent(BaseAgent):
         for task in task_results:
             summary_parts.append(f"\n{task['description']}:")
             # 简化结果显示
-            result_preview = task['result'][:200] + "..." if len(task['result']) > 200 else task['result']
+            result_preview = task['result'][:500] + "..." if len(task['result']) > 500 else task['result']
             summary_parts.append(f"   {result_preview}")
 
         summary_parts.append("\n以上是初步查找结果，如需更详细信息，请提供更具体的需求。")

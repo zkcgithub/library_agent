@@ -80,15 +80,26 @@ class LibraryTools:
 
     def search_knowledge_base(self, query: str) -> str:
         """搜索知识库工具"""
+        # 改进的知识库搜索工具
         if self.vectorstore is None:
             return "知识库尚未初始化"
 
         try:
-            docs = self.vectorstore.similarity_search(query, k=3)
-            results = []
-            for i, doc in enumerate(docs):
-                results.append(f"文档 {i + 1}:\n{doc.page_content}\n")
-            return "\n".join(results) if results else "未找到相关信息"
+            # 使用更智能的搜索
+            docs = self.vectorstore.similarity_search(query, k=5)
+            if not docs:
+                # 尝试语义相近的搜索
+                return "在知识库中未找到相关信息。建议：1. 检查关键词拼写 2. 尝试更通用的术语"
+
+            results = ["📚 知识库检索结果："]
+            for i, doc in enumerate(docs, 1):
+                content = doc.page_content
+                # 简化和格式化输出
+                if len(content) > 500:
+                    content = content[:500] + "..."
+                results.append(f"{i}. {content}")
+
+            return "\n".join(results)
         except Exception as e:
             return f"搜索过程中出错: {str(e)}"
 
@@ -96,19 +107,53 @@ class LibraryTools:
         """模拟图书目录搜索工具"""
         # 这里可以替换为真实的图书馆API调用
         mock_books = [
-            {"title": "深度学习", "author": "Ian Goodfellow", "year": 2017, "category": "计算机科学"},
-            {"title": "人工智能：现代方法", "author": "Stuart Russell", "year": 2020, "category": "计算机科学"},
-            {"title": "Python编程从入门到实践", "author": "Eric Matthes", "year": 2020, "category": "编程"},
+            {"title": "深度学习", "author": "Ian Goodfellow", "year": 2016,
+             "category": "计算机科学", "call_number": "TP181/G646", "status": "可借"},
+            {"title": "Python编程从入门到实践", "author": "Eric Matthes", "year": 2016,
+             "category": "编程", "call_number": "TP311.56/M429", "status": "可借"},
+            {"title": "人工智能：现代方法", "author": "Stuart Russell", "year": 2020,
+             "category": "计算机科学", "call_number": "TP18/R961", "status": "可借"},
+            {"title": "统计学习方法", "author": "李航", "year": 2019,
+             "category": "计算机科学", "call_number": "TP181/L175", "status": "可借"},
+            {"title": "机器学习", "author": "周志华", "year": 2016,
+             "category": "计算机科学", "call_number": "TP181/Z774", "status": "借出"},
+            {"title": "神经网络与深度学习", "author": "Michael Nielsen", "year": 2019,
+             "category": "计算机科学", "call_number": "TP183/N669", "status": "可借"},
         ]
 
-        # 简单关键词匹配
+        # 改进的搜索逻辑
         results = []
-        for book in mock_books:
-            if any(keyword.lower() in str(book.values()).lower()
-                   for keyword in query.split()):
-                results.append(f"{book['title']} - {book['author']} ({book['year']})")
+        query_lower = query.lower()
 
-        return "\n".join(results) if results else "未找到相关图书"
+        for book in mock_books:
+            # 多字段匹配
+            match_score = 0
+            if any(keyword in book['title'].lower() for keyword in ['深度学习', '机器学习', '人工智能'] if
+                   keyword in query_lower):
+                match_score += 2
+            if any(keyword in book['title'].lower() for keyword in query_lower.split()):
+                match_score += 1
+            if any(keyword in book['author'].lower() for keyword in query_lower.split()):
+                match_score += 1
+            if any(keyword in book['category'] for keyword in ['计算机', '编程', '智能'] if keyword in query_lower):
+                match_score += 1
+
+            if match_score > 0:
+                results.append((match_score, book))
+
+        # 按匹配度排序
+        results.sort(key=lambda x: x[0], reverse=True)
+
+        if results:
+            output = ["📖 图书检索结果："]
+            for score, book in results[:3]:  # 返回前3个结果
+                output.append(
+                    f"· 《{book['title']}》 - {book['author']} ({book['year']})\n"
+                    f"  类别: {book['category']} | 索书号: {book['call_number']} | 状态: {book['status']}"
+                )
+            return "\n".join(output)
+        else:
+            return "未找到相关图书。建议：1. 检查书名或作者名 2. 尝试更通用的搜索词"
 
     def get_tools(self):
         """返回所有工具"""

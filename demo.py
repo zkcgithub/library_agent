@@ -12,9 +12,6 @@ def main():
     # 测试用例
     test_queries = [
         "帮我找深度学习的书籍",
-        "推荐一些适合初学者的Python编程书",
-        "比较一下机器学习和深度学习的区别",
-        "什么是卷积神经网络？"
     ]
 
     for i, query in enumerate(test_queries, 1):
