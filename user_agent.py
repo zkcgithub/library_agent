@@ -1,103 +1,85 @@
-import re
 from base_agent import BaseAgent
+from langchain_openai import ChatOpenAI
+from config import Config
+import json
 
 
 class UserAgent(BaseAgent):
-    """用户智能体 - 负责任务规划和分解"""
+    """用户智能体 - 负责理解用户意图和规划任务"""
 
     def __init__(self):
-        super().__init__("UserAgent", "任务规划与分解")
-        self.task_patterns = {
-            "search": ["查找", "搜索", "找", "查询", "检索"],
-            "recommend": ["推荐", "有什么好", "适合"],
-            "explain": ["解释", "什么是", "介绍", "说明"],
-            "compare": ["对比", "比较", "区别"]
+        super().__init__("UserAgent", "用户意图理解与任务规划")
+        self.llm = ChatOpenAI(
+            api_key=Config.SILICONFLOW_API_KEY,
+            base_url=Config.SILICONFLOW_API_BASE,
+            model=Config.LLM_MODEL,
+            temperature=0.1,
+            max_tokens=800
+        )
+
+    def understand_intent(self, query: str) -> dict:
+        """理解用户意图"""
+        prompt = f"""
+请分析以下用户查询的意图，并确定需要执行的任务：
+
+用户查询: "{query}"
+
+请按以下JSON格式返回分析结果：
+{{
+    "intent": "搜索|推荐|咨询|其他",
+    "target_type": "书籍|作者|主题|其他", 
+    "target_details": "具体的目标描述",
+    "required_tools": ["knowledge_base_search", "book_catalog_search"],
+    "tasks": [
+        {{
+            "type": "search",
+            "description": "具体的任务描述",
+            "tools": ["knowledge_base_search", "book_catalog_search"]
+        }}
+    ]
+}}
+
+请确保tasks数组至少包含一个任务。
+"""
+
+        try:
+            response = self.llm.invoke(prompt)
+            return json.loads(response.content)
+        except:
+            # 如果LLM解析失败，使用基于规则的回退
+            return self._fallback_intent_understanding(query)
+
+    def _fallback_intent_understanding(self, query: str) -> dict:
+        """基于规则的回退意图理解"""
+        tasks = [{
+            "type": "search",
+            "description": f"搜索关于'{query}'的书籍信息",
+            "tools": ["knowledge_base_search", "book_catalog_search"]
+        }]
+
+        return {
+            "intent": "搜索",
+            "target_type": "书籍",
+            "target_details": query,
+            "required_tools": ["knowledge_base_search", "book_catalog_search"],
+            "tasks": tasks
         }
 
-    def analyze_intent(self, query: str) -> dict[str, any]:
-        """分析用户意图"""
-        intent = {
-            "type": [],
-            "keywords": [],
-            "complexity": "simple"
-        }
+    def plan_tasks(self, query: str) -> dict:
+        """规划执行任务"""
+        intent_analysis = self.understand_intent(query)
 
-        # 提取意图类型
-        for intent_type, patterns in self.task_patterns.items():
-            if any(pattern in query for pattern in patterns):
-                intent["type"].append(intent_type)
-
-        # 提取关键词 (简单实现)
-        words = query.replace("?", "").replace("？", "").split()
-        intent["keywords"] = [word for word in words if len(word) > 1]
-
-        # 判断复杂度
-        if len(intent["type"]) > 1 or "compare" in intent["type"]:
-            intent["complexity"] = "complex"
-
-        if not intent["type"]:
-            intent["type"] = ["search"]  # 默认搜索意图
-
-        return intent
-
-    def plan_tasks(self, intent: dict[str, any]) -> list[dict]:
-        """根据意图规划任务"""
-        tasks = []
-
-        if "search" in intent["type"]:
-            tasks.append({
-                "type": "search",
-                "description": f"搜索关于{''.join(intent['keywords'][:3])}的相关信息",
-                "tools": ["book_catalog_search", "knowledge_base_search"]
-            })
-
-        if "explain" in intent["type"]:
-            tasks.append({
-                "type": "explain",
-                "description": f"解释{''.join(intent['keywords'][:2])}的相关概念",
-                "tools": ["knowledge_base_search"]
-            })
-
-        if "compare" in intent["type"]:
-            # 复杂任务分解
-            tasks.extend([
-                {
-                    "type": "search",
-                    "description": f"搜索{intent['keywords'][0]}的信息",
-                    "tools": ["knowledge_base_search"]
-                },
-                {
-                    "type": "search",
-                    "description": f"搜索{intent['keywords'][1] if len(intent['keywords']) > 1 else '相关对比项'}的信息",
-                    "tools": ["knowledge_base_search"]
-                },
-                {
-                    "type": "compare",
-                    "description": "对比分析找到的信息",
-                    "tools": []
-                }
-            ])
-
-        return tasks
-
-    def process_query(self, query: str, context: dict[str, any] = None) -> dict[str, any]:
-        """处理用户查询"""
-        self.remember(f"用户查询: {query}", "user")
-
-        # 分析意图
-        intent = self.analyze_intent(query)
-        self.remember(f"分析意图: {intent}")
-
-        # 规划任务
-        tasks = self.plan_tasks(intent)
-        self.remember(f"生成任务: {len(tasks)}个任务")
-
-        response = self.format_response("", "task_plan")
+        response = self.format_response("任务规划完成", "task_plan")
         response.update({
             "original_query": query,
-            "intent": intent,
-            "tasks": tasks,
+            "intent_analysis": intent_analysis,
+            "tasks": intent_analysis['tasks'],
             "next_agent": "LibraryAgent"
         })
 
         return response
+
+    def process_query(self, query: str, context: dict = None) -> dict:
+        """处理用户查询"""
+        self.remember(f"处理用户查询: {query}")
+        return self.plan_tasks(query)

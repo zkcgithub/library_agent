@@ -1,14 +1,24 @@
 from base_agent import BaseAgent
-from config import LibraryTools
+from config import LibraryTools, Config
+from langchain_openai import ChatOpenAI
 
 
 class LibraryAgent(BaseAgent):
     """图书馆智能体 - 负责执行具体任务"""
 
     def __init__(self):
-        super().__init__("LibraryAgent", "任务执行与工具调用")
+        super().__init__("LibraryAgent", "书籍检索与推荐")
         self.tools_manager = LibraryTools()
         self.available_tools = {tool.name: tool for tool in self.tools_manager.get_tools()}
+
+        # 初始化LLM - 使用硅基流动API
+        self.llm = ChatOpenAI(
+            api_key=Config.SILICONFLOW_API_KEY,
+            base_url=Config.SILICONFLOW_API_BASE,
+            model=Config.LLM_MODEL,
+            temperature=0.1,
+            max_tokens=1000
+        )
 
     def execute_task(self, task: dict) -> str:
         """执行单个任务"""
@@ -25,16 +35,55 @@ class LibraryAgent(BaseAgent):
             for tool_name in tools:
                 if tool_name in self.available_tools:
                     try:
-                        # 简单地从描述中提取查询词
-                        query_keywords = description.replace("搜索", "").replace("关于", "").replace("的", "")
+                        # 从描述中提取查询词，支持中文关键词
+                        query_keywords = self._extract_search_query(description)
                         result = self.available_tools[tool_name].func(query_keywords)
-                        results.append(f"工具 {tool_name} 结果:\n{result}")
+                        results.append(f"【{tool_name} 搜索结果】\n{result}")
                     except Exception as e:
                         results.append(f"工具 {tool_name} 执行出错: {str(e)}")
+
+            # 如果是搜索类型的任务，使用LLM进行总结和推荐
+            if task_type in ["search", "recommend"] and results:
+                prompt = self._build_summary_prompt(description, results)
+                llm_result = self.llm.invoke(prompt)
+                results.append(f"【智能总结与推荐】\n{llm_result.content}")
+
             return "\n\n".join(results)
         else:
-            # 无工具任务，返回提示信息
-            return f"需要人工处理的任务: {description}"
+            # 无工具任务，使用LLM处理
+            prompt = f"请处理以下图书馆相关任务：{description}"
+            llm_result = self.llm.invoke(prompt)
+            return f"任务处理结果:\n{llm_result.content}"
+
+    def _extract_search_query(self, description: str) -> str:
+        """从任务描述中提取搜索关键词"""
+        # 移除常见的任务描述词汇
+        stop_words = ["搜索", "查找", "推荐", "找一下", "关于", "的", "有哪些", "什么"]
+        query = description
+        for word in stop_words:
+            query = query.replace(word, "")
+        return query.strip()
+
+    def _build_summary_prompt(self, original_query: str, search_results: list) -> str:
+        """构建总结提示词"""
+        results_text = "\n".join(search_results)
+
+        prompt = f"""根据用户查询和搜索结果，提供有用的书籍推荐和总结。
+
+用户查询：{original_query}
+
+搜索结果：
+{results_text}
+
+请根据以上信息：
+1. 总结找到的相关书籍
+2. 推荐最相关的3-5本书籍
+3. 简要说明推荐理由
+4. 如果搜索结果不足，建议用户提供更具体的信息
+
+请用中文回复，保持友好和专业的语气。"""
+
+        return prompt
 
     def process_query(self, query: dict, context: dict[str, any] = None) -> dict[str, any]:
         """处理任务执行请求"""
@@ -72,14 +121,33 @@ class LibraryAgent(BaseAgent):
         if not task_results:
             return "未找到相关信息"
 
-        summary_parts = [f"针对您的查询『{original_query}』，我找到了以下信息：\n"]
-
+        # 提取所有结果中的关键信息
+        all_results = []
         for task in task_results:
-            summary_parts.append(f"\n{task['description']}:")
-            # 简化结果显示
-            result_preview = task['result'][:500] + "..." if len(task['result']) > 500 else task['result']
-            summary_parts.append(f"   {result_preview}")
+            all_results.append(task['result'])
 
-        summary_parts.append("\n以上是初步查找结果，如需更详细信息，请提供更具体的需求。")
+        # 使用LLM进行最终总结
+        summary_prompt = f"""用户查询：{original_query}
 
-        return "\n".join(summary_parts)
+所有搜索结果：
+{"\n".join(all_results)}
+
+请根据以上信息提供一个简洁、有用的最终回答，包括：
+1. 主要找到的书籍
+2. 关键推荐
+3. 下一步建议
+
+用中文回复，保持专业和友好："""
+
+        try:
+            llm_result = self.llm.invoke(summary_prompt)
+            return llm_result.content
+        except Exception as e:
+            # 如果LLM总结失败，返回简单汇总
+            simple_summary = f"针对您的查询『{original_query}』，我找到了以下信息：\n"
+            for task in task_results:
+                simple_summary += f"\n{task['description']}:\n"
+                # 显示前200字符
+                preview = task['result'][:200] + "..." if len(task['result']) > 200 else task['result']
+                simple_summary += f"  {preview}\n"
+            return simple_summary
